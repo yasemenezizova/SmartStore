@@ -1,0 +1,76 @@
+﻿@using Microsoft.AspNetCore.Routing
+@using Smartstore.Utilities
+
+@functions
+{
+    private long? Value
+    {
+        get
+        {
+            long? value = null;
+            if (ViewData.Model != null)
+            {
+                value = Convert.ToInt64(ViewData.Model, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                var htmlAttributes = new RouteValueDictionary(ViewData["htmlAttributes"] ?? new object());
+                if (htmlAttributes.TryGetValue("value", out var rawValue))
+                {
+                    value = Convert.ToInt64(rawValue, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+
+            return value;
+        }
+    }
+
+    private string CssClass
+    {
+        get
+        {
+            var cls = "numerictextbox-group flex-grow-1";
+
+            if (TryGetMetadata<string>("size", out var size))
+            {
+                cls += " numerictextbox-group-" + size;
+            }
+
+            return cls;
+        }
+    }
+}
+
+@{
+    var attributes = new AttributeDictionary().Merge(CommonHelper.ObjectToDictionary(ViewData["htmlAttributes"] ?? new object()));
+}
+
+<div class="@CssClass">
+    @*TODO: (mh) (core) Reimplement with taghelper once available *@
+    @*@(Html.Telerik().NumericTextBox<long>()
+                .Name(ViewData.TemplateInfo.GetFullHtmlFieldName(string.Empty))
+                .EmptyMessage(GetMetadata<string>("placeholder") ?? T("Common.EnterValue"))
+                .ButtonTitleUp(T("Common.IncreaseValue"))
+                .ButtonTitleDown(T("Common.DecreaseValue"))
+                .MinValue(GetMetadata<long?>("min"))
+                .MaxValue(GetMetadata<long?>("max"))
+                .IncrementStep(GetMetadata<long?>("step") ?? 1)
+                .DecimalDigits(0)
+                .Value(Value)
+        )*@
+
+    <input asp-for="@Model"
+           attrs="attributes"
+           value="@Value"
+           class="form-control"
+           type="number"
+           placeholder="@(GetMetadata<string>("placeholder") ?? T("Common.EnterValue").Value)"
+           min="@(GetMetadata<long?>("min"))"
+           max="@(GetMetadata<long?>("max"))"
+           step="@(GetMetadata<long?>("step") ?? 1)" />
+
+    @if (TryGetMetadata<string>("postfix", out var postfix))
+    {
+        <span class="numerictextbox-postfix">@postfix</span>
+    }
+</div>

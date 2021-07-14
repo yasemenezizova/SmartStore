@@ -1,0 +1,484 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Smartstore.Core.Catalog.Pricing;
+using Smartstore.Core.Checkout.Cart;
+using Smartstore.Core.Data;
+using Smartstore.Core.Localization;
+using Smartstore.Core.Seo;
+using Smartstore.Core.Stores;
+using Smartstore.Data.Hooks;
+using Smartstore.Engine;
+using Smartstore.Engine.Modularity;
+using Smartstore.Http;
+using Smartstore.IO;
+using Smartstore.Scheduling;
+using Smartstore.Utilities;
+
+namespace Smartstore.Core.DataExchange.Export
+{
+    public partial class ExportProfileService : AsyncDbSaveHook<ExportProfile>, IExportProfileService
+    {
+        private const string FILE_NAME_PATTERN = "%Store.Id%-%Profile.Id%-%File.Index%-%Profile.SeoName%";
+        private const string EXPORT_FILE_ROOT = "ExportProfiles";
+
+        private static readonly Regex _regexFolderName = new(".*/ExportProfiles/?", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+        private readonly SmartDbContext _db;
+        private readonly IApplicationContext _appContext;
+        private readonly IStoreContext _storeContext;
+        private readonly ILocalizationService _localizationService;
+        private readonly IUrlHelper _urlHelper;
+        private readonly ITaskStore _taskStore;
+        private readonly IProviderManager _providerManager;
+        private readonly DataExchangeSettings _dataExchangeSettings;
+
+        public ExportProfileService(
+            SmartDbContext db,
+            IApplicationContext appContext,
+            IStoreContext storeContext,
+            ILocalizationService localizationService,
+            IUrlHelper urlHelper,
+            ITaskStore taskStore,
+            IProviderManager providerManager,
+            DataExchangeSettings dataExchangeSettings)
+        {
+            _db = db;
+            _appContext = appContext;
+            _storeContext = storeContext;
+            _localizationService = localizationService;
+            _urlHelper = urlHelper;
+            _taskStore = taskStore;
+            _providerManager = providerManager;
+            _dataExchangeSettings = dataExchangeSettings;
+        }
+
+        public Localizer T { get; set; } = NullLocalizer.Instance;
+
+        #region Hook
+
+        protected override Task<HookResult> OnUpdatingAsync(ExportProfile entity, IHookedEntity entry, CancellationToken cancelToken)
+        {
+            // No more validation of 'FolderName' necessary anymore. Contains only the name of the export folder (no more path information).
+            entity.FolderName = _regexFolderName.Replace(PathHelper.NormalizeRelativePath(entity.FolderName), string.Empty);
+
+            return Task.FromResult(HookResult.Ok);
+        }
+
+        #endregion
+
+        public virtual async Task<IDirectory> GetExportDirectoryAsync(ExportProfile profile, string subpath = null, bool createIfNotExists = false)
+        {
+            Guard.NotNull(profile, nameof(profile));
+            Guard.IsTrue(profile.FolderName.EmptyNull().Length > 2, nameof(profile.FolderName), "The export folder name must be at least 3 characters long.");
+
+            // Legacy examples:
+            // ~/App_Data/ExportProfiles/smartstorecategorycsv
+            // ~/App_Data/Tenants/Default/ExportProfiles/smartstoreshoppingcartitemcsv
+            var root = _appContext.TenantRoot;
+            var path = root.PathCombine(EXPORT_FILE_ROOT, _regexFolderName.Replace(profile.FolderName, string.Empty), subpath.EmptyNull());
+
+            if (createIfNotExists)
+            {
+                var _ = await root.TryCreateDirectoryAsync(path);
+            }
+
+            return await root.GetDirectoryAsync(path);
+        }
+
+        public virtual async Task<IDirectory> GetDeploymentDirectoryAsync(ExportDeployment deployment, bool createIfNotExists = false)
+        {
+            if (deployment != null)
+            {
+                if (deployment.DeploymentType == ExportDeploymentType.PublicFolder)
+                {
+                    var webRoot = _appContext.WebRoot;
+                    var path = webRoot.PathCombine(DataExporter.PublicDirectoryName, deployment.SubFolder);
+
+                    if (createIfNotExists)
+                    {
+                        _ = await webRoot.TryCreateDirectoryAsync(path);
+                    }
+
+                    return await webRoot.GetDirectoryAsync(path);
+                }
+                else if (deployment.DeploymentType == ExportDeploymentType.FileSystem && deployment.FileSystemPath.HasValue())
+                {
+                    // Any file system path is allowed.
+                    var fullPath = deployment.FileSystemPath;
+
+                    if (!PathHelper.IsAbsolutePhysicalPath(fullPath))
+                    {
+                        fullPath = CommonHelper.MapPath(PathHelper.NormalizeRelativePath(fullPath));
+                    }
+
+                    if (!Directory.Exists(fullPath))
+                    {
+                        if (!createIfNotExists)
+                        {
+                            return null;
+                        }
+
+                        try
+                        {
+                            Directory.CreateDirectory(fullPath);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+
+                    // 'fullPath' must exist for LocalFileSystem (otherwise exception)!
+                    var root = new LocalFileSystem(fullPath);
+
+                    return await root.GetDirectoryAsync(null);
+                }
+            }
+
+            return null;
+        }
+
+        public virtual async Task<string> GetDeploymentDirectoryUrlAsync(ExportDeployment deployment, Store store = null)
+        {
+            if (deployment != null && deployment.DeploymentType == ExportDeploymentType.PublicFolder)
+            {
+                if (store == null)
+                {
+                    await _db.LoadReferenceAsync(deployment, x => x.Profile);
+
+                    var filter = XmlHelper.Deserialize<ExportFilter>(deployment.Profile.Filtering);
+                    var storeId = filter.StoreId;
+
+                    if (storeId == 0)
+                    {
+                        var projection = XmlHelper.Deserialize<ExportProjection>(deployment.Profile.Projection);
+                        storeId = projection.StoreId ?? 0;
+                    }
+
+                    store = _storeContext.GetStoreById(storeId) ?? _storeContext.CurrentStore;
+                }
+
+                // Always use IUrlHelper.Content("~/subpath") or WebHelper.ToAbsolutePath("~/subpath") for public URLs,
+                // so that IIS application path can be prepended if applicable. 
+                var path = WebHelper.ToAppRelativePath(_appContext.WebRoot.PathCombine(DataExporter.PublicDirectoryName, deployment.SubFolder));
+
+                return store.Url.TrimEnd('/') + _urlHelper.Content(path).EnsureEndsWith("/");
+            }
+
+            return null;
+        }
+
+        public virtual async Task<ExportProfile> InsertExportProfileAsync(
+            Provider<IExportProvider> provider,
+            bool isSystemProfile = false,
+            string profileSystemName = null,
+            int cloneFromProfileId = 0)
+        {
+            Guard.NotNull(provider, nameof(provider));
+
+            var providerSystemName = provider.Metadata.SystemName;
+            var resourceName = provider.Metadata.ResourceKeyPattern.FormatInvariant(providerSystemName, "FriendlyName");
+            var profileName = await _localizationService.GetResourceAsync(resourceName, 0, false, providerSystemName, true);
+
+            var profile = await InsertExportProfileAsync(
+                providerSystemName,
+                profileName.NullEmpty() ?? providerSystemName,
+                provider.Value.FileExtension,
+                provider.Metadata.ExportFeatures,
+                isSystemProfile,
+                profileSystemName,
+                cloneFromProfileId);
+
+            return profile;
+        }
+
+        public virtual async Task<ExportProfile> InsertExportProfileAsync(
+            string providerSystemName,
+            string name,
+            string fileExtension,
+            ExportFeatures features,
+            bool isSystemProfile = false,
+            string profileSystemName = null,
+            int cloneFromProfileId = 0)
+        {
+            Guard.NotEmpty(providerSystemName, nameof(providerSystemName));
+
+            if (name.IsEmpty())
+            {
+                name = providerSystemName;
+            }
+
+            if (!isSystemProfile)
+            {
+                var profileCount = await _db.ExportProfiles.CountAsync(x => x.ProviderSystemName == providerSystemName);
+                name = $"{T("Common.My").Value} {name} {profileCount + 1}";
+            }
+
+            TaskDescriptor task = null;
+            ExportProfile cloneProfile = null;
+            ExportProfile profile = null;
+
+            if (cloneFromProfileId != 0)
+            {
+                cloneProfile = await _db.ExportProfiles
+                    .Include(x => x.Task)
+                    .Include(x => x.Deployments)
+                    .FindByIdAsync(cloneFromProfileId);
+            }
+
+            if (cloneProfile == null)
+            {
+                task = _taskStore.CreateDescriptor(name + " Task", typeof(DataExportTask));
+                task.Enabled = false;
+                task.CronExpression = "0 */6 * * *"; // Every six hours.
+                task.StopOnError = false;
+                task.IsHidden = true;
+            }
+            else
+            {
+                task = cloneProfile.Task.Clone();
+                task.Name = name + " Task";
+            }
+
+            await _taskStore.InsertTaskAsync(task);
+
+            if (cloneProfile == null)
+            {
+                profile = new ExportProfile
+                {
+                    FileNamePattern = FILE_NAME_PATTERN
+                };
+
+                if (isSystemProfile)
+                {
+                    profile.Enabled = true;
+                    profile.PerStore = false;
+                    profile.CreateZipArchive = false;
+                    profile.Cleanup = false;
+                }
+                else
+                {
+                    // What we do here is to preset typical settings for feed creation
+                    // but on the other hand they may be untypical for generic data export\exchange.
+                    var projection = new ExportProjection
+                    {
+                        RemoveCriticalCharacters = true,
+                        CriticalCharacters = "¼,½,¾",
+                        PriceType = PriceDisplayType.PreSelectedPrice,
+                        NoGroupedProducts = features.HasFlag(ExportFeatures.CanOmitGroupedProducts),
+                        OnlyIndividuallyVisibleAssociated = true,
+                        DescriptionMerging = ExportDescriptionMerging.Description
+                    };
+
+                    var filter = new ExportFilter
+                    {
+                        IsPublished = true,
+                        ShoppingCartTypeId = (int)ShoppingCartType.ShoppingCart
+                    };
+
+                    profile.Projection = XmlHelper.Serialize(projection);
+                    profile.Filtering = XmlHelper.Serialize(filter);
+                }
+            }
+            else
+            {
+                profile = cloneProfile.Clone();
+            }
+
+            profile.IsSystemProfile = isSystemProfile;
+            profile.Name = name;
+            profile.ProviderSystemName = providerSystemName;
+            profile.TaskId = task.Id;
+
+            var cleanedSystemName = providerSystemName
+                .Replace("Exports.", string.Empty)
+                .Replace("Feeds.", string.Empty)
+                .Replace("/", string.Empty)
+                .Replace("-", string.Empty);
+
+            var folderName = SeoHelper.BuildSlug(cleanedSystemName, true, false, false)
+                .ToValidPath()
+                .Truncate(_dataExchangeSettings.MaxFileNameLength);
+
+            profile.FolderName = _appContext.TenantRoot.CreateUniqueDirectoryName(EXPORT_FILE_ROOT, folderName);
+
+            profile.SystemName = profileSystemName.IsEmpty() && isSystemProfile
+                ? cleanedSystemName
+                : profileSystemName;
+
+            _db.ExportProfiles.Add(profile);
+
+            // Get the export profile ID.
+            await _db.SaveChangesAsync();
+
+            task.Alias = profile.Id.ToString();
+
+            if (fileExtension.HasValue() && !isSystemProfile)
+            {
+                if (cloneProfile == null)
+                {
+                    if (features.HasFlag(ExportFeatures.CreatesInitialPublicDeployment))
+                    {
+                        var webRoot = _appContext.WebRoot;
+                        var subfolder = webRoot.CreateUniqueDirectoryName(DataExporter.PublicDirectoryName, folderName);
+                        _ = await webRoot.TryCreateDirectoryAsync(webRoot.PathCombine(DataExporter.PublicDirectoryName, subfolder));
+
+                        profile.Deployments.Add(new ExportDeployment
+                        {
+                            ProfileId = profile.Id,
+                            Enabled = true,
+                            DeploymentType = ExportDeploymentType.PublicFolder,
+                            Name = profile.Name,
+                            SubFolder = subfolder
+                        });
+                    }
+                }
+                else
+                {
+                    cloneProfile.Deployments.Each(x => profile.Deployments.Add(x.Clone()));
+                }
+            }
+
+            // Finally update task and export profile.
+            await _taskStore.UpdateTaskAsync(task);
+            await _db.SaveChangesAsync();
+
+            return profile;
+        }
+
+        public virtual async Task DeleteExportProfileAsync(ExportProfile profile, bool force = false)
+        {
+            if (profile == null)
+            {
+                return;
+            }
+
+            if (!force && profile.IsSystemProfile)
+            {
+                throw new SmartException(T("Admin.DataExchange.Export.CannotDeleteSystemProfile"));
+            }
+
+            await _db.LoadCollectionAsync(profile, x => x.Deployments);
+            await _db.LoadReferenceAsync(profile, x => x.Task);
+
+            var directory = await GetExportDirectoryAsync(profile);
+            var deployments = profile.Deployments.Where(x => !x.IsTransientRecord()).ToList();
+
+            if (profile.Deployments.Any())
+            {
+                _db.ExportDeployments.RemoveRange(deployments);
+            }
+
+            _db.ExportProfiles.Remove(profile);
+
+            await _db.SaveChangesAsync();
+
+            if (profile.Task != null)
+            {
+                await _taskStore.DeleteTaskAsync(profile.Task);
+            }
+
+            if (directory.Exists)
+            {
+                directory.FileSystem.ClearDirectory(directory, true, TimeSpan.Zero);
+            }
+        }
+
+        public virtual IEnumerable<Provider<IExportProvider>> LoadAllExportProviders(int storeId = 0, bool includeHidden = true)
+        {
+            var allProviders = _providerManager.GetAllProviders<IExportProvider>(storeId)
+                .Where(x => x.Value != null && (includeHidden || !x.Metadata.IsHidden))
+                .OrderBy(x => x.Metadata.FriendlyName);
+
+            return allProviders;
+        }
+    }
+
+    // TODO: (mg) (core) remove test export providers later (required for porting backend's export section).
+    #region Export providers for testing
+
+    [SystemName("Exports.SmartStoreCategoryCsv")]
+    public class CategoryCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.Category;
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreProductCsv")]
+    [ExportFeatures(Features =
+        ExportFeatures.UsesRelatedDataUnits |
+        ExportFeatures.CanOmitGroupedProducts |
+        ExportFeatures.CanProjectAttributeCombinations |
+        ExportFeatures.CanProjectDescription)]
+    public class ProductCsvExportProvider : ExportProviderBase
+    {
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreManufacturerCsv")]
+    public class ManufacturerCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.Manufacturer;
+        //public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreCustomerCsv")]
+    public class CustomerCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.Customer;
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreOrderCsv")]
+    public class OrderCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.Order;
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreNewsSubscriptionCsv")]
+    public class SubscriberCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.NewsLetterSubscription;
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Exports.SmartStoreShoppingCartItemCsv")]
+    public class ShoppingCartItemCsvExportProvider : ExportProviderBase
+    {
+        public override ExportEntityType EntityType => ExportEntityType.ShoppingCartItem;
+        public override string FileExtension => "CSV";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    [SystemName("Feeds.GoogleMerchantCenterProductXml")]
+    [ExportFeatures(Features =
+        ExportFeatures.CreatesInitialPublicDeployment |
+        ExportFeatures.CanOmitGroupedProducts |
+        ExportFeatures.CanProjectAttributeCombinations |
+        ExportFeatures.CanProjectDescription |
+        ExportFeatures.UsesSkuAsMpnFallback |
+        ExportFeatures.OffersBrandFallback |
+        ExportFeatures.UsesSpecialPrice |
+        ExportFeatures.UsesAttributeCombination)]
+    public class GmcXmlExportProvider : ExportProviderBase
+    {
+        public override string FileExtension => "XML";
+        protected override Task ExportAsync(ExportExecuteContext context, CancellationToken cancelToken) => throw new NotImplementedException();
+    }
+
+    #endregion
+}

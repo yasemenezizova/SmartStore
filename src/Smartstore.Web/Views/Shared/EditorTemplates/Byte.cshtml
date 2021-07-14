@@ -1,0 +1,52 @@
+﻿@using Smartstore.Utilities
+
+@functions{
+    private string CssClass
+    {
+        get
+        {
+            @* TODO: (mh) (core) Css classes will change *@
+            var cls = "numerictextbox-group flex-grow-1";
+
+            if (TryGetMetadata<string>("size", out var size))
+            {
+                cls += " numerictextbox-group-" + size;
+            }
+
+            return cls;
+        }
+    }
+}
+
+@{
+    var attributes = new AttributeDictionary().Merge(CommonHelper.ObjectToDictionary(ViewData["htmlAttributes"] ?? new object()));
+}
+
+<div class="@CssClass">
+    @*TODO: (mh) (core) Reimplement with taghelper once available *@
+    @*@(Html.Telerik().NumericTextBox<byte>()
+                .Name(ViewData.TemplateInfo.GetFullHtmlFieldName(string.Empty))
+                .EmptyMessage(GetMetadata<string>("placeholder") ?? T("Common.EnterValue"))
+                .ButtonTitleUp(T("Common.IncreaseValue"))
+                .ButtonTitleDown(T("Common.DecreaseValue"))
+                .MinValue(GetMetadata<byte?>("min") ?? 0)
+                .MaxValue(GetMetadata<byte?>("max") ?? 255)
+                .IncrementStep(GetMetadata<byte?>("step") ?? 1)
+                .DecimalDigits(0)
+                .Value(Value)
+        )*@
+
+    <input asp-for="@Model"
+           type="number"
+           attrs="attributes"
+           class="form-control"
+           placeholder="@(GetMetadata<string>("placeholder") ?? T("Common.EnterValue").Value)"
+           min="@(GetMetadata<byte?>("min") ?? 0)"
+           max="@(GetMetadata<byte?>("max") ?? 255)"
+           step="@(GetMetadata<byte?>("step") ?? 1)" />
+
+    @if (TryGetMetadata<string>("postfix", out var postfix))
+    {
+        <span class="numerictextbox-postfix">@postfix</span>
+    }
+</div>

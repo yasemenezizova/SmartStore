@@ -1,0 +1,12 @@
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\bin\Debug\Smartstore.deps.json
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\bin\Debug\Smartstore.dll
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\bin\Debug\ref\Smartstore.dll
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\bin\Debug\Smartstore.pdb
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.csprojAssemblyReference.cache
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.AssemblyInfoInputs.cache
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.AssemblyInfo.cs
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.csproj.CoreCompileInputs.cache
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.dll
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\ref\Smartstore.dll
+C:\Users\Dell\Desktop\Smartstore\src\Smartstore\obj\Debug\Smartstore.pdb

@@ -1,0 +1,126 @@
+﻿@model ProductOverviewModel
+
+@{ 
+    var parentModel = ViewData["Parent"] as ProductListModel;
+}
+
+<datagrid id="products-grid"
+          allow-resize="true"
+          allow-row-selection="true"
+          allow-edit="true"
+          preserve-grid-state="true" preserve-command-state="true"
+          allow-column-reordering="true">
+    <datasource read="@Url.Action("ProductList")" delete="@Url.Action("ProductDelete")" update="@Url.Action("ProductUpdate")" insert="@Url.Action("ProductInsert")" />
+    <paging position="Bottom" page-index="1" show-size-chooser="true" />
+    <sorting allow-unsort="true" allow-multisort="false"></sorting>
+    <toolbar>
+        <toolbar-group>
+            <button datagrid-action="DataGridToolAction.ToggleSearchPanel" type="button" class="btn btn-light btn-icon">
+                <i class="fa fa-fw fa-filter"></i>
+            </button>
+        </toolbar-group>
+        <toolbar-group>
+            @*<a v-if="!grid.editing.active" asp-action="Create" class="btn btn-primary btn-flat mr-auto">
+                <i class="fa fa-plus"></i>
+                <span>@T("Admin.Common.AddNew")...</span>
+            </a>*@
+            <button datagrid-action="DataGridToolAction.InsertRow" type="button" class="btn btn-primary btn-flat no-anims mr-auto">
+                <i class="fa fa-plus"></i>
+                <span>@T("Admin.Common.AddNew")...</span>
+            </button>
+
+            <button datagrid-action="DataGridToolAction.SaveChanges" type="button" class="btn btn-warning no-anims btn-flat">
+                <i class="fa fa-check"></i>
+                <span>@T("Admin.Common.SaveChanges")</span>
+            </button>
+            <button datagrid-action="DataGridToolAction.CancelEdit" type="button" class="btn btn-light btn-flat mr-auto">
+                <span>@T("Common.Cancel")</span>
+            </button>
+        </toolbar-group>
+
+        <toolbar-group class="omega"></toolbar-group>
+
+        <toolbar-group class="border-right-0 mr-0 pr-0">
+            <button datagrid-action="DataGridToolAction.DeleteSelectedRows" type="button" class="btn btn-danger no-anims btn-flat">
+                <i class="far fa-trash-alt"></i>
+                <span>@T("Admin.Common.Delete.Selected")</span>
+            </button>
+        </toolbar-group>
+
+        <zone name="datagrid_toolbar_after"></zone>
+        @* TODO: (mg) (core) Inject export dropdowns like this from modules *@
+        @*<toolbar-group class="border-right-0 border-left mr-0 pr-0 pl-2 ml-2">
+            <div class="dropdown">
+                <button v-bind:class="{ disabled: !grid.hasSelection }" type="button" class="btn btn-light btn-flat dropdown-toggle" data-toggle="dropdown" data-boundary="window">
+                    <i class="far fa-upload"></i>
+                    <span>Exportieren</span>
+                </button>
+                <div class="dropdown-menu dropdown-menu-right">
+                    <a href="#" class="dropdown-item">Hallo</a>
+                </div>
+            </div>
+        </toolbar-group>*@
+    </toolbar>
+    <search-panel>
+        <partial name="_Grid.Products.Search" model="parentModel" />
+    </search-panel>
+    <columns>
+        @if (parentModel.DisplayProductPictures)
+        {
+            <column for="PictureThumbnailUrl"
+                    title=""
+                    width="48px"
+                    sortable="false"
+                    visible="true"
+                    readonly="true"
+                    resizable="false"
+                    reorderable="false">
+                <display-template>
+                    <div v-if="item.row.Id > 0" class="d-flex align-items-center justify-content-center" style="position: absolute; width: 100%; height: 100%; padding: 8px; left: 0; top: 0;">
+                        <img :alt="item.row.Id" :src="item.value" style="max-width: 42px; max-height: 32px" />
+                    </div>
+                </display-template>
+            </column>
+        }
+        <column for="Name" width="3fr" hideable="false">
+            <display-template>
+                @Html.LabeledProductName()
+            </display-template>
+        </column>
+        <column for="Sku" />
+        <column for="Gtin" visible="false" />
+        <column for="ManufacturerPartNumber" visible="false" />
+        <column for="Price" halign="flex-end" />
+        <column for="OldPrice" halign="flex-end" visible="false" />
+        <column for="StockQuantity" halign="center" />
+        <column for="MinStockQuantity" halign="center" visible="false" />
+        <column for="LimitedToStores" visible="!parentModel.IsSingleStoreMode" readonly="true" halign="center" />
+        <column for="CreatedOn" entity-member="CreatedOnUtc" readonly="true" visible="false" />
+        <column for="UpdatedOn" entity-member="UpdatedOnUtc" readonly="true" />
+        <column for="Published" halign="center" />
+        <column for="AvailableStartDateTimeUtc" visible="false" />
+        <column for="AvailableEndDateTimeUtc" visible="false" />
+    </columns>
+    <row-commands>
+        <a datarow-action="DataRowAction.Custom" :href="item.row.EditUrl">@T("Common.Edit")</a>
+        @* TODO: (core) Implement Product grid "clone" row command *@
+        <a datarow-action="DataRowAction.Custom" href="#">Kopieren</a>
+        <div class="dropdown-divider"></div>
+        <a datarow-action="DataRowAction.Delete">@T("Common.Delete")</a>
+    </row-commands>
+    <detail-view>
+        @*<div class="datagrid-root">
+            <sm-datagrid 
+                :options="{ keyMemberName: 'Id', vborders: true, hover: true, striped: true }" 
+                :data-source="{ read: '@Url.Action("ProductList")' }" 
+                :columns="[ { member: 'Name', name: 'Name', title: 'Name', visible: true } ]" 
+                :paging="{ enabled: true, pageSize: 5, pageIndex: 20 }" 
+                :sorting="{ enabled: true, descriptors: [] }">
+            </sm-datagrid>
+        </div>*@
+    </detail-view>
+</datagrid>
+
+<script sm-target-zone="scripts" data-origin="products-grid">
+
+</script>
